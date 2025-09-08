@@ -3,11 +3,13 @@ import fs from 'fs'
 import os from 'os'
 import { promisify } from 'util'
 import { apVersionUtil, environmentVariables, exceptionHandler, fileExists, networkUtils, webhookSecretsUtils, WorkerSystemProp } from '@activepieces/server-shared'
-import { assertNotNullOrUndefined, isNil, MachineInformation, spreadIfDefined, WorkerMachineHealthcheckRequest, WorkerMachineHealthcheckResponse } from '@activepieces/shared'
+import { apId, assertNotNullOrUndefined, isNil, MachineInformation, spreadIfDefined, WorkerMachineHealthcheckRequest, WorkerMachineHealthcheckResponse } from '@activepieces/shared'
 
 const execAsync = promisify(exec)
 
 let settings: WorkerMachineHealthcheckResponse | undefined
+
+const workerId = apId()
 
 export const workerMachine = {
     async getSystemInfo(): Promise<WorkerMachineHealthcheckRequest> {
@@ -35,6 +37,7 @@ export const workerMachine = {
                 ...spreadIfDefined('FILE_STORAGE_LOCATION', settings?.FILE_STORAGE_LOCATION),
                 ...spreadIfDefined('FLOW_WORKER_CONCURRENCY', settings?.FLOW_WORKER_CONCURRENCY?.toString()),
                 ...spreadIfDefined('SCHEDULED_WORKER_CONCURRENCY', settings?.SCHEDULED_WORKER_CONCURRENCY?.toString()),
+                ...spreadIfDefined('AGENTS_WORKER_CONCURRENCY', settings?.AGENTS_WORKER_CONCURRENCY?.toString()),
                 ...spreadIfDefined('TRIGGER_TIMEOUT_SECONDS', settings?.TRIGGER_TIMEOUT_SECONDS?.toString()),
                 ...spreadIfDefined('PAUSED_FLOW_TIMEOUT_DAYS', settings?.PAUSED_FLOW_TIMEOUT_DAYS?.toString()),
                 ...spreadIfDefined('FLOW_TIMEOUT_SECONDS', settings?.FLOW_TIMEOUT_SECONDS?.toString()),
@@ -48,6 +51,7 @@ export const workerMachine = {
                 ...spreadIfDefined('S3_USE_SIGNED_URLS', settings?.S3_USE_SIGNED_URLS),
                 version: await apVersionUtil.getCurrentRelease(),
             },
+            workerId,
         }
     },
     init: async (_settings: WorkerMachineHealthcheckResponse) => {
@@ -55,10 +59,14 @@ export const workerMachine = {
             ..._settings,
             ...spreadIfDefined('FLOW_WORKER_CONCURRENCY', environmentVariables.getNumberEnvironment(WorkerSystemProp.FLOW_WORKER_CONCURRENCY)),
             ...spreadIfDefined('SCHEDULED_WORKER_CONCURRENCY', environmentVariables.getNumberEnvironment(WorkerSystemProp.SCHEDULED_WORKER_CONCURRENCY)),
+            ...spreadIfDefined('AGENTS_WORKER_CONCURRENCY', environmentVariables.getNumberEnvironment(WorkerSystemProp.AGENTS_WORKER_CONCURRENCY)),
         }
 
         await webhookSecretsUtils.init(settings.APP_WEBHOOK_SECRETS)
         exceptionHandler.initializeSentry(settings.SENTRY_DSN)
+    },
+    hasSettings: () => {
+        return !isNil(settings)
     },
     getSettings: () => {
         assertNotNullOrUndefined(settings, 'Settings are not set')

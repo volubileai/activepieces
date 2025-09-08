@@ -1,11 +1,12 @@
 import { DialogTrigger } from '@radix-ui/react-dialog';
 import { useMutation } from '@tanstack/react-query';
 import { t } from 'i18next';
+import { GlobeIcon, WorkflowIcon } from 'lucide-react';
 import React, { useState, useMemo } from 'react';
 import { FieldErrors, useForm, useWatch } from 'react-hook-form';
+import { useNavigate } from 'react-router-dom';
 
 import { SearchableSelect } from '@/components/custom/searchable-select';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -20,22 +21,19 @@ import { Form, FormField, FormMessage } from '@/components/ui/form';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/components/ui/use-toast';
-import { appConnectionsApi } from '@/features/connections/lib/app-connections-api';
+import {
+  appConnectionsMutations,
+  appConnectionsQueries,
+} from '@/features/connections/lib/app-connections-hooks';
 import { flowsApi } from '@/features/flows/lib/flows-api';
 import PieceIconWithPieceName from '@/features/pieces/components/piece-icon-from-name';
-import { piecesHooks } from '@/features/pieces/lib/pieces-hook';
+import { piecesHooks } from '@/features/pieces/lib/pieces-hooks';
 import { cn } from '@/lib/utils';
-import {
-  AppConnectionWithoutSensitiveData,
-  PopulatedFlow,
-} from '@activepieces/shared';
-
-import { ConnectionFlowCard } from './connection-flow-card';
+import { AppConnectionScope, PopulatedFlow } from '@activepieces/shared';
 
 type ReplaceConnectionsDialogProps = {
   onConnectionMerged: () => void;
   children: React.ReactNode;
-  connections: AppConnectionWithoutSensitiveData[];
   projectId: string;
 };
 
@@ -53,7 +51,6 @@ enum STEP {
 const ReplaceConnectionsDialog = ({
   onConnectionMerged,
   children,
-  connections,
   projectId,
 }: ReplaceConnectionsDialogProps) => {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -62,30 +59,21 @@ const ReplaceConnectionsDialog = ({
   const { toast } = useToast();
   const { pieces, isLoading: piecesLoading } = piecesHooks.usePieces({});
 
-  const { mutate: replaceConnections, isPending: isReplacing } = useMutation({
-    mutationFn: async (values: FormData) => {
-      await appConnectionsApi.replace({
-        sourceAppConnectionId: values.sourceConnections.id,
-        targetAppConnectionId: values.replacedWithConnection.id,
-        projectId: projectId,
-      });
-    },
-    onSuccess: () => {
-      toast({
-        title: t('Success'),
-        description: t('Connections replaced successfully'),
-      });
-      setDialogOpen(false);
-      onConnectionMerged();
-    },
-    onError: () => {
-      toast({
-        title: t('Error'),
-        description: t('Failed to replace connections'),
-        variant: 'destructive',
-      });
-    },
-  });
+  const { data: connections, isLoading: connectionsLoading } =
+    appConnectionsQueries.useAppConnections({
+      request: {
+        projectId,
+        limit: 1000,
+      },
+      extraKeys: [projectId, dialogOpen],
+      enabled: dialogOpen,
+    });
+
+  const { mutate: replaceConnections, isPending: isReplacing } =
+    appConnectionsMutations.useReplaceConnections({
+      setDialogOpen,
+      refetch: onConnectionMerged,
+    });
 
   const { mutate: fetchAffectedFlows, isPending: isFetchingAffectedFlows } =
     useMutation({
@@ -152,7 +140,7 @@ const ReplaceConnectionsDialog = ({
   const selectedPiece = form.watch('pieceName');
 
   const connectionPieceNames = new Set(
-    connections.map((conn) => conn.pieceName),
+    connections?.data.map((conn) => conn.pieceName),
   );
 
   const piecesOptions =
@@ -168,9 +156,8 @@ const ReplaceConnectionsDialog = ({
         value: piece.name,
       })) ?? [];
 
-  const filteredConnections = connections.filter(
-    (conn) => conn.pieceName === selectedPiece,
-  );
+  const filteredConnections =
+    connections?.data.filter((conn) => conn.pieceName === selectedPiece) ?? [];
 
   const sourceConnectionId = useWatch({
     control: form.control,
@@ -202,17 +189,20 @@ const ReplaceConnectionsDialog = ({
       return;
     }
 
-    replaceConnections(values);
+    replaceConnections({
+      sourceAppConnectionId: values.sourceConnections.id,
+      targetAppConnectionId: values.replacedWithConnection.id,
+      projectId: projectId,
+    });
   };
 
   const handleDialogOpenChange = (open: boolean) => {
     setDialogOpen(open);
-    if (!open) {
-      form.reset();
-      setStep(STEP.SELECT);
-      setAffectedFlows([]);
-    }
+    form.reset();
+    setStep(STEP.SELECT);
+    setAffectedFlows([]);
   };
+  const navigate = useNavigate();
 
   return (
     <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
@@ -226,18 +216,14 @@ const ReplaceConnectionsDialog = ({
           </DialogTitle>
           <DialogDescription>
             {step === STEP.SELECT ? (
-              t('Replace one connection with another.')
+              t(
+                'This will replace one connection with another connection, existing flows will be changed to use the new connection, and the old connection will be deleted.',
+              )
             ) : (
               <>
-                {t('This action requires ')}
-                <span className="font-bold text-black">
-                  {t('republishing')}
-                </span>
-                {t(' affected flows and ')}
-                <span className="font-bold text-black">
-                  {t('reconnecting')}
-                </span>
-                {t(' any associated MCP pieces.')}
+                {t(
+                  'Existing MCP servers will not be changed automatically, you have to reconnect them manually.',
+                )}
               </>
             )}
           </DialogDescription>
@@ -299,9 +285,10 @@ const ReplaceConnectionsDialog = ({
                     name="sourceConnections"
                     render={({ field }) => (
                       <div className="flex flex-col gap-2">
-                        <Label>{t('Connection to Replace')}</Label>
+                        <Label>{t('Connection to replace')}</Label>
                         <SearchableSelect
                           value={field.value?.id}
+                          loading={connectionsLoading}
                           onChange={(value) => {
                             const selectedConnection = filteredConnections.find(
                               (c) => c.id === value,
@@ -315,10 +302,15 @@ const ReplaceConnectionsDialog = ({
                               externalId: '',
                             });
                           }}
-                          options={filteredConnections.map((conn) => ({
-                            label: conn.displayName,
-                            value: conn.id,
-                          }))}
+                          options={filteredConnections
+                            .filter(
+                              (conn) =>
+                                conn.scope === AppConnectionScope.PROJECT,
+                            )
+                            .map((conn) => ({
+                              label: conn.displayName,
+                              value: conn.id,
+                            }))}
                           placeholder={t('Choose connection to replace')}
                           valuesRendering={(value) => {
                             const conn = filteredConnections.find(
@@ -351,6 +343,7 @@ const ReplaceConnectionsDialog = ({
                           <Label>{t('Replaced With')}</Label>
                           <SearchableSelect
                             value={field.value?.id}
+                            loading={connectionsLoading}
                             onChange={(value) => {
                               const selectedConnection =
                                 filteredConnections.find((c) => c.id === value);
@@ -374,6 +367,10 @@ const ReplaceConnectionsDialog = ({
                                     border={false}
                                     circle={false}
                                   />
+                                  {conn?.scope ===
+                                    AppConnectionScope.PLATFORM && (
+                                    <GlobeIcon className="w-4 h-4" />
+                                  )}
                                   <span>{conn!.displayName}</span>
                                 </div>
                               );
@@ -384,14 +381,6 @@ const ReplaceConnectionsDialog = ({
                       )}
                     />
                   )}
-
-                  <Alert>
-                    <AlertDescription>
-                      {t(
-                        'All flows will be changed to use the replaced with connection',
-                      )}
-                    </AlertDescription>
-                  </Alert>
                 </>
               )}
 
@@ -421,15 +410,33 @@ const ReplaceConnectionsDialog = ({
                     {t('No flows will be affected by this change')}
                   </span>
                 ) : (
-                  affectedFlows.map((flow, index) => (
-                    <ConnectionFlowCard key={index} flow={flow} />
+                  affectedFlows.map((flow) => (
+                    <div
+                      className="flex items-center justify-between"
+                      key={flow.id}
+                    >
+                      <div className="flex items-center gap-2">
+                        <WorkflowIcon className="w-5 h-5" />
+                        <Button
+                          variant="link"
+                          className="p-0 h-auto font-medium text-foreground truncate text-base"
+                          onClick={() => {
+                            navigate(
+                              `/projects/${flow.projectId}/flows/${flow.id}`,
+                            );
+                          }}
+                        >
+                          {flow.version.displayName}
+                        </Button>
+                      </div>
+                    </div>
                   ))
                 )}
               </div>
             </ScrollArea>
 
             <DialogFooter>
-              <Button type="button" variant="secondary" onClick={handleBack}>
+              <Button type="button" variant="accent" onClick={handleBack}>
                 {t('Back')}
               </Button>
               <Button

@@ -1,6 +1,8 @@
+import { GitPushOperationType } from '@activepieces/ee-shared'
 import { ApId, CreateTableRequest, CreateTableWebhookRequest, ExportTableResponse, ListTablesRequest, Permission, PrincipalType, SeekPage, SERVICE_KEY_SECURITY_OPENAPI, Table, UpdateTableRequest } from '@activepieces/shared'
 import { FastifyPluginAsyncTypebox, Type } from '@fastify/type-provider-typebox'
 import { StatusCodes } from 'http-status-codes'
+import { gitRepoService } from '../../ee/projects/project-release/git-sync/git-sync.service'
 import { tableService } from './table.service'
 
 const DEFAULT_PAGE_SIZE = 10
@@ -12,17 +14,15 @@ export const tablesController: FastifyPluginAsyncTypebox = async (fastify) => {
             projectId: request.principal.projectId,
             request: request.body,
         })
-    },
-    ),
+    })
 
- 
     fastify.post('/:id', UpdateRequest, async (request) => {
         return tableService.update({
             projectId: request.principal.projectId,
             id: request.params.id,
             request: request.body,
         })
-         
+
     })
 
     fastify.get('/', GetTablesRequest, async (request) => {
@@ -31,11 +31,23 @@ export const tablesController: FastifyPluginAsyncTypebox = async (fastify) => {
             cursor: request.query.cursor,
             limit: request.query.limit ?? DEFAULT_PAGE_SIZE,
             name: request.query.name,
+            externalIds: request.query.externalIds,
         })
-    },
-    )
+    })
 
     fastify.delete('/:id', DeleteRequest, async (request, reply) => {
+        const table = await tableService.getOneOrThrow({
+            projectId: request.principal.projectId,
+            id: request.params.id,
+        })
+        await gitRepoService(request.log).onDeleted({
+            type: GitPushOperationType.DELETE_TABLE,
+            externalId: table.externalId,
+            userId: request.principal.id,
+            projectId: request.principal.projectId,
+            platformId: request.principal.platform.id,
+            log: request.log,
+        })
         await tableService.delete({
             projectId: request.principal.projectId,
             id: request.params.id,
@@ -45,7 +57,7 @@ export const tablesController: FastifyPluginAsyncTypebox = async (fastify) => {
     )
 
     fastify.get('/:id', GetTableByIdRequest, async (request) => {
-        return tableService.getById({
+        return tableService.getOneOrThrow({
             projectId: request.principal.projectId,
             id: request.params.id,
         })
@@ -76,7 +88,7 @@ export const tablesController: FastifyPluginAsyncTypebox = async (fastify) => {
     })
 }
 
-const CreateRequest =  {
+const CreateRequest = {
     config: {
         allowedPrincipals: [PrincipalType.ENGINE, PrincipalType.USER],
         permission: Permission.WRITE_TABLE,
@@ -110,7 +122,7 @@ const DeleteRequest = {
         allowedPrincipals: [PrincipalType.ENGINE, PrincipalType.USER],
         permission: Permission.WRITE_TABLE,
     },
-    
+
     schema: {
         tags: ['tables'],
         security: [SERVICE_KEY_SECURITY_OPENAPI],
@@ -150,7 +162,7 @@ const ExportTableRequest = {
     schema: {
         tags: ['tables'],
         security: [SERVICE_KEY_SECURITY_OPENAPI],
-        description: 'Export a table', 
+        description: 'Export a table',
         params: Type.Object({
             id: Type.String(),
         }),

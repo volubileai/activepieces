@@ -1,12 +1,8 @@
 import { PieceProperty, PropertyType } from '@activepieces/pieces-framework'
-
 import { McpProperty, McpPropertyType } from '@activepieces/shared'
 import { z } from 'zod' 
 
-
-export const MAX_TOOL_NAME_LENGTH = 47
-
-export function mcpPropertyToZod(property: McpProperty): z.ZodTypeAny {
+function mcpPropertyToZod(property: McpProperty): z.ZodTypeAny {
     let schema: z.ZodTypeAny
 
     switch (property.type) {
@@ -21,10 +17,10 @@ export function mcpPropertyToZod(property: McpProperty): z.ZodTypeAny {
             schema = z.boolean()
             break
         case McpPropertyType.ARRAY:
-            schema = z.array(z.unknown())
+            schema = z.array(z.string())
             break
         case McpPropertyType.OBJECT:
-            schema = z.record(z.string(), z.unknown())
+            schema = z.record(z.string(), z.string())
             break
         default:
             schema = z.unknown()
@@ -34,16 +30,17 @@ export function mcpPropertyToZod(property: McpProperty): z.ZodTypeAny {
         schema = schema.describe(property.description)
     }
 
-    return property.required ? schema : schema.optional()
+    return property.required ? schema : schema.nullish()
 }
 
-export function piecePropertyToZod(property: PieceProperty): z.ZodTypeAny {
+function piecePropertyToZod(property: PieceProperty): z.ZodTypeAny {
     let schema: z.ZodTypeAny
 
     switch (property.type) {
         case PropertyType.SHORT_TEXT:
         case PropertyType.LONG_TEXT:
         case PropertyType.DATE_TIME:
+        case PropertyType.FILE:
             schema = z.string()
             break
         case PropertyType.NUMBER:
@@ -60,13 +57,27 @@ export function piecePropertyToZod(property: PieceProperty): z.ZodTypeAny {
             schema = z.record(z.string(), z.unknown())
             break
         case PropertyType.MULTI_SELECT_DROPDOWN:
-            schema = z.array(z.string())
+        case PropertyType.STATIC_MULTI_SELECT_DROPDOWN:
+            schema = z.union([z.array(z.string()), z.array(z.record(z.string(), z.unknown()))])
             break
         case PropertyType.DROPDOWN:
+        case PropertyType.STATIC_DROPDOWN:
+            schema = z.union([z.string(), z.number(), z.record(z.string(), z.unknown())])
+            break
+        case PropertyType.COLOR:
+        case PropertyType.SECRET_TEXT:
+        case PropertyType.BASIC_AUTH:
+        case PropertyType.CUSTOM_AUTH:
+        case PropertyType.OAUTH2:
             schema = z.string()
             break
-        default:
+        case PropertyType.MARKDOWN:
+            schema = z.unknown().nullish()
+            break
+        case PropertyType.CUSTOM:
+        case PropertyType.DYNAMIC:
             schema = z.unknown()
+            break
     }
 
     if (property.defaultValue) {
@@ -77,5 +88,10 @@ export function piecePropertyToZod(property: PieceProperty): z.ZodTypeAny {
         schema = schema.describe(property.description)
     }
 
-    return property.required ? schema : schema.optional()
+    return property.required ? schema : schema.nullish()
+}
+
+export const mcpUtils = {
+    mcpPropertyToZod,
+    piecePropertyToZod,
 }

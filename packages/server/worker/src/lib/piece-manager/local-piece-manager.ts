@@ -1,19 +1,26 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
-import { ApLock, filePiecesUtils, memoryLock } from '@activepieces/server-shared'
-import { assertEqual, assertNotNullOrUndefined, PackageType, PiecePackage } from '@activepieces/shared'
+import { ApLock, CacheState, filePiecesUtils, memoryLock } from '@activepieces/server-shared'
+import { assertEqual, assertNotNullOrUndefined, isEmpty, PackageType, PiecePackage } from '@activepieces/shared'
 import { FastifyBaseLogger } from 'fastify'
-import { cacheHandler } from '../utils/cache-handler'
+import { cacheState } from '../cache/cache-state'
+import { packageManager } from '../cache/package-manager'
 import { workerMachine } from '../utils/machine'
-import { packageManager } from '../utils/package-manager'
 import { PIECES_BUILDER_MUTEX_KEY } from './development/pieces-builder'
 import { PieceManager } from './piece-manager'
-enum CacheState {
-    READY = 'READY',
-    PENDING = 'PENDING',
-}
 
 export class LocalPieceManager extends PieceManager {
+
+    override async install({ projectPath, pieces, log }: InstallParams): Promise<void> {
+        if (isEmpty(pieces)) {
+            return
+        }
+        await packageManager(log).init({
+            path: projectPath,
+        })
+        await super.install({ projectPath, pieces, log })
+    }
+    
     protected override async installDependencies(
         params: InstallParams,
     ): Promise<void> {
@@ -36,10 +43,11 @@ export class LocalPieceManager extends PieceManager {
                 '@activepieces/pieces-common': `link:${baseLinkPath}/common`,
                 '@activepieces/pieces-framework': `link:${baseLinkPath}/framework`,
                 '@activepieces/shared': `link:${basePath}/dist/packages/shared`,
+                '@activepieces/common-ai': `link:${baseLinkPath}/common-ai`,
             }
             await linkPackages(projectPath, join(baseLinkPath, 'framework'), '@activepieces/pieces-framework', frameworkPackages, params.log)
             await linkPackages(projectPath, join(baseLinkPath, 'common'), '@activepieces/pieces-common', frameworkPackages, params.log)
-
+            await linkPackages(projectPath, join(baseLinkPath, 'common-ai'), '@activepieces/common-ai', frameworkPackages, params.log)
             for (const piece of pieces) {
                 assertEqual(piece.packageType, PackageType.REGISTRY, 'packageType', `Piece ${piece.pieceName} is not of type REGISTRY`)
                 const directoryPath = await filePiecesUtils(packages, params.log).findDirectoryByPackageName(piece.pieceName)
@@ -62,7 +70,7 @@ const linkPackages = async (
     packages: Record<string, string>,
     log: FastifyBaseLogger,
 ): Promise<void> => {
-    const cache = cacheHandler(projectPath)
+    const cache = cacheState(projectPath)
     if (await cache.cacheCheckState(packageName) === CacheState.READY) {
         return
     }

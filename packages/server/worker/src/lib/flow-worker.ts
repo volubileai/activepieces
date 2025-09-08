@@ -1,12 +1,17 @@
-import { exceptionHandler, JobData, JobStatus, OneTimeJobData, QueueName, rejectedPromiseHandler, RepeatingJobData, UserInteractionJobData, WebhookJobData } from '@activepieces/server-shared'
+import { readdir, rm } from 'fs/promises'
+import path from 'path'
+import { AgentJobData, exceptionHandler, GLOBAL_CACHE_ALL_VERSIONS_PATH, JobData, JobStatus, LATEST_CACHE_VERSION, OneTimeJobData, QueueName, rejectedPromiseHandler, RepeatingJobData, UserInteractionJobData, WebhookJobData } from '@activepieces/server-shared'
 import { isNil } from '@activepieces/shared'
 import { FastifyBaseLogger } from 'fastify'
 import { engineApiService, workerApiService } from './api/server-api.service'
+import { agentJobExecutor } from './executors/agent-job-executor'
 import { flowJobExecutor } from './executors/flow-job-executor'
 import { repeatingJobExecutor } from './executors/repeating-job-executor'
 import { userInteractionJobExecutor } from './executors/user-interaction-job-executor'
 import { webhookExecutor } from './executors/webhook-job-executor'
 import { jobPoller } from './job-polling'
+import { engineRunner } from './runner'
+import { engineRunnerSocket } from './runner/engine-runner-socket'
 import { workerMachine } from './utils/machine'
 
 let closed = true
@@ -15,6 +20,9 @@ let heartbeatInterval: NodeJS.Timeout
 
 export const flowWorker = (log: FastifyBaseLogger) => ({
     async init({ workerToken: token }: { workerToken: string }): Promise<void> {
+        rejectedPromiseHandler(deleteStaleCache(log), log)
+        await engineRunnerSocket(log).init()
+
         closed = false
         workerToken = token
         await initializeWorker(log)
@@ -24,12 +32,15 @@ export const flowWorker = (log: FastifyBaseLogger) => ({
 
         const FLOW_WORKER_CONCURRENCY = workerMachine.getSettings().FLOW_WORKER_CONCURRENCY
         const SCHEDULED_WORKER_CONCURRENCY = workerMachine.getSettings().SCHEDULED_WORKER_CONCURRENCY
+        const AGENTS_WORKER_CONCURRENCY = workerMachine.getSettings().AGENTS_WORKER_CONCURRENCY
         log.info({
             FLOW_WORKER_CONCURRENCY,
             SCHEDULED_WORKER_CONCURRENCY,
+            AGENTS_WORKER_CONCURRENCY,
         }, 'Starting worker')
         for (const queueName of Object.values(QueueName)) {
-            const times = queueName === QueueName.SCHEDULED ? SCHEDULED_WORKER_CONCURRENCY : FLOW_WORKER_CONCURRENCY
+            const times = queueName === QueueName.SCHEDULED ?
+                SCHEDULED_WORKER_CONCURRENCY : queueName === QueueName.AGENTS ? AGENTS_WORKER_CONCURRENCY : FLOW_WORKER_CONCURRENCY
             log.info({
                 queueName,
                 times,
@@ -40,8 +51,12 @@ export const flowWorker = (log: FastifyBaseLogger) => ({
         }
     },
     async close(): Promise<void> {
+        await engineRunnerSocket(log).disconnect()
         closed = true
         clearTimeout(heartbeatInterval)
+        if (workerMachine.hasSettings()) {
+            await engineRunner(log).shutdownAllWorkers()
+        }
     },
 })
 
@@ -74,14 +89,15 @@ async function run<T extends QueueName>(queueName: T, log: FastifyBaseLogger): P
                 job: {
                     queueName,
                     jobId: job?.id,
+                    attempsStarted: job?.attempsStarted,
                 },
             }, 'Job polled')
             if (isNil(job)) {
                 continue
             }
-            const { data, engineToken: jobEngineToken } = job
+            const { data, engineToken: jobEngineToken, attempsStarted } = job
             engineToken = jobEngineToken
-            await consumeJob(queueName, data, engineToken, log)
+            await consumeJob(job.id, queueName, data, attempsStarted, engineToken, log)
             await markJobAsCompleted(queueName, engineToken, log)
             log.debug({
                 job: {
@@ -106,23 +122,32 @@ async function run<T extends QueueName>(queueName: T, log: FastifyBaseLogger): P
     }
 }
 
-async function consumeJob(queueName: QueueName, jobData: JobData, engineToken: string, log: FastifyBaseLogger): Promise<void> {
+async function consumeJob(jobId: string, queueName: QueueName, jobData: JobData, attempsStarted: number, engineToken: string, log: FastifyBaseLogger): Promise<void> {
     switch (queueName) {
         case QueueName.USERS_INTERACTION:
             await userInteractionJobExecutor(log).execute(jobData as UserInteractionJobData, engineToken, workerToken)
             break
         case QueueName.ONE_TIME:
-            await flowJobExecutor(log).executeFlow(jobData as OneTimeJobData, engineToken)
+            await flowJobExecutor(log).executeFlow(jobData as OneTimeJobData, attempsStarted, engineToken)
             break
         case QueueName.SCHEDULED:
             await repeatingJobExecutor(log).executeRepeatingJob({
+                jobId,
                 data: jobData as RepeatingJobData,
                 engineToken,
                 workerToken,
             })
             break
         case QueueName.WEBHOOK: {
-            await webhookExecutor(log).consumeWebhook(jobData as WebhookJobData, engineToken, workerToken)
+            await webhookExecutor(log).consumeWebhook(jobId, jobData as WebhookJobData, engineToken, workerToken)
+            break
+        }
+        case QueueName.AGENTS: {
+            await agentJobExecutor(log).executeAgent({
+                jobData: jobData as AgentJobData,
+                engineToken,
+                workerToken,
+            })
             break
         }
     }
@@ -134,6 +159,7 @@ async function markJobAsCompleted(queueName: QueueName, engineToken: string, log
             // This is will be marked as completed in update-run endpoint
             break
         }
+        case QueueName.AGENTS:
         case QueueName.USERS_INTERACTION:
         case QueueName.SCHEDULED:
         case QueueName.WEBHOOK: {
@@ -142,5 +168,21 @@ async function markJobAsCompleted(queueName: QueueName, engineToken: string, log
                 queueName,
             })
         }
+    }
+}
+
+async function deleteStaleCache(log: FastifyBaseLogger): Promise<void> {
+    try {
+        const cacheDir = path.resolve(GLOBAL_CACHE_ALL_VERSIONS_PATH)
+        const entries = await readdir(cacheDir, { withFileTypes: true })
+
+        for (const entry of entries) {
+            if (entry.isDirectory() && entry.name !== LATEST_CACHE_VERSION) {
+                await rm(path.join(cacheDir, entry.name), { recursive: true })
+            }
+        }
+    }
+    catch (error) {
+        exceptionHandler.handle(error, log)
     }
 }

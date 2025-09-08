@@ -1,29 +1,27 @@
 import { t } from 'i18next';
-import { ListTodo, Server, Table2, Workflow } from 'lucide-react';
+import { Bot, ListTodo, Package, Table2, Workflow } from 'lucide-react';
 import { createContext, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 
+import { McpSvg } from '@/assets/img/custom/mcp';
 import { useEmbedding } from '@/components/embed-provider';
-import { issueHooks } from '@/features/issues/hooks/issue-hooks';
+import { AiCreditsLimitAlert } from '@/features/billing/components/ai-credits-limit-alert';
+import { ProjectLockedAlert } from '@/features/billing/components/project-locked-alert';
+import { TaskLimitAlert } from '@/features/billing/components/task-limit-alert';
+import { WelcomeTrialDialog } from '@/features/billing/components/trial-dialog';
+import { UpgradeDialog } from '@/features/billing/components/upgrade-dialog';
 import { useAuthorization } from '@/hooks/authorization-hooks';
+import { flagsHooks } from '@/hooks/flags-hooks';
 import { platformHooks } from '@/hooks/platform-hooks';
 import { projectHooks } from '@/hooks/project-hooks';
-import { isNil, Permission } from '@activepieces/shared';
+import { ApEdition, ApFlagId, isNil, Permission } from '@activepieces/shared';
 
 import { authenticationSession } from '../../lib/authentication-session';
 
-import {
-  SidebarComponent,
-  SidebarGroup,
-  SidebarItem,
-  SidebarLink,
-} from './sidebar';
+import { SidebarComponent, SidebarItem, SidebarLink } from './sidebar';
 
 type DashboardContainerProps = {
   children: React.ReactNode;
-  hideHeader?: boolean;
-  removeGutters?: boolean;
-  removeBottomPadding?: boolean;
 };
 
 const ProjectChangedRedirector = ({
@@ -38,32 +36,25 @@ const ProjectChangedRedirector = ({
 };
 export const CloseTaskLimitAlertContext = createContext({
   isAlertClosed: false,
-  setIsAlertClosed: (isAlertClosed: boolean) => {},
+  setIsAlertClosed: (_isAlertClosed: boolean) => {},
 });
 
-export function DashboardContainer({
-  children,
-  removeGutters,
-  hideHeader,
-  removeBottomPadding,
-}: DashboardContainerProps) {
-  const [automationOpen, setAutomationOpen] = useState(true);
+export function DashboardContainer({ children }: DashboardContainerProps) {
   const { platform } = platformHooks.useCurrentPlatform();
-  const { data: showIssuesNotification } = issueHooks.useIssuesNotification();
   const { project } = projectHooks.useCurrentProject();
   const { embedState } = useEmbedding();
   const currentProjectId = authenticationSession.getProjectId();
   const { checkAccess } = useAuthorization();
+  const { data: edition } = flagsHooks.useFlag<ApEdition>(ApFlagId.EDITION);
+  const { data: showBilling } = flagsHooks.useFlag<boolean>(
+    ApFlagId.SHOW_BILLING,
+  );
+
   const [isAlertClosed, setIsAlertClosed] = useState(false);
   if (isNil(currentProjectId) || currentProjectId === '') {
     return <Navigate to="/sign-in" replace />;
   }
-  const embedFilter = (link: SidebarItem) => {
-    if (link.type === 'link') {
-      return !embedState.isEmbedded || !!link.showInEmbed;
-    }
-    return true;
-  };
+
   const permissionFilter = (link: SidebarItem) => {
     if (link.type === 'link') {
       return isNil(link.hasPermission) || link.hasPermission;
@@ -71,118 +62,85 @@ export function DashboardContainer({
     return true;
   };
 
-  const filterAlerts = (item: SidebarItem) =>
-    platform.alertsEnabled || item.label !== t('Alerts');
+  const releasesLink: SidebarLink = {
+    type: 'link',
+    to: authenticationSession.appendProjectRoutePrefix('/releases'),
+    icon: <Package />,
+    label: t('Releases'),
+    hasPermission:
+      project.releasesEnabled && checkAccess(Permission.READ_PROJECT_RELEASE),
+    show: project.releasesEnabled,
+    isSubItem: false,
+  };
 
-  const automationGroup: SidebarGroup = {
-    type: 'group',
-    label: t('Automation'),
-    putEmptySpaceTop: true,
-    icon: Workflow,
-    isActive: (pathname: string) => {
-      const paths = [
-        '/flows',
-        '/issues',
-        '/runs',
-        '/connections',
-        '/releases',
-        '/tables',
-      ];
-      return paths.some((path) => pathname.includes(path));
-    },
+  const flowsLink: SidebarLink = {
+    type: 'link',
+    to: authenticationSession.appendProjectRoutePrefix('/flows'),
+    icon: <Workflow />,
+    label: t('Flows'),
+    hasPermission: checkAccess(Permission.READ_FLOW),
+    isSubItem: false,
     name: t('Products'),
-    defaultOpen: true,
-    open: automationOpen,
-    setOpen: setAutomationOpen,
-    items: [
-      {
-        type: 'link',
-        to: authenticationSession.appendProjectRoutePrefix('/flows'),
-        label: t('Flows'),
-        showInEmbed: true,
-        hasPermission: checkAccess(Permission.READ_FLOW),
-        isSubItem: true,
-      },
-      {
-        type: 'link',
-        to: authenticationSession.appendProjectRoutePrefix('/runs'),
-        label: t('Runs'),
-        showInEmbed: true,
-        notification: showIssuesNotification,
-        hasPermission: checkAccess(Permission.READ_RUN),
-        isSubItem: true,
-      },
-      {
-        type: 'link',
-        to: authenticationSession.appendProjectRoutePrefix('/connections'),
-        label: t('Connections'),
-        showInEmbed: true,
-        hasPermission: checkAccess(Permission.READ_APP_CONNECTION),
-        isSubItem: true,
-      },
-      {
-        type: 'link',
-        to: authenticationSession.appendProjectRoutePrefix('/releases'),
-        label: t('Releases'),
-        hasPermission:
-          project.releasesEnabled &&
-          checkAccess(Permission.READ_PROJECT_RELEASE),
-        isSubItem: true,
-      },
-    ],
+    show: true,
+    isActive: (pathname) =>
+      pathname.includes('/flows') ||
+      pathname.includes('/runs') ||
+      pathname.includes('/issues'),
+    tutorialTab: 'flows',
   };
 
   const mcpLink: SidebarLink = {
     type: 'link',
-    to: authenticationSession.appendProjectRoutePrefix('/mcp'),
+    to: authenticationSession.appendProjectRoutePrefix('/mcps'),
     label: t('MCP'),
-    icon: Server,
-    showInEmbed: true,
+    show: platform.plan.mcpsEnabled || !embedState.isEmbedded,
+    icon: <McpSvg className="size-4" />,
     hasPermission: checkAccess(Permission.READ_MCP),
     isSubItem: false,
+    tutorialTab: 'mcpServers',
+  };
+
+  const agentsLink: SidebarLink = {
+    type: 'link',
+    to: authenticationSession.appendProjectRoutePrefix('/agents'),
+    label: t('Agents'),
+    icon: <Bot />,
+    show: platform.plan.agentsEnabled || !embedState.isEmbedded,
+    hasPermission: true,
+    isSubItem: false,
+    tutorialTab: 'agents',
   };
 
   const tablesLink: SidebarLink = {
     type: 'link',
     to: authenticationSession.appendProjectRoutePrefix('/tables'),
     label: t('Tables'),
-    icon: Table2,
-    showInEmbed: true,
+    show: platform.plan.tablesEnabled || !embedState.isEmbedded,
+    icon: <Table2 />,
     hasPermission: checkAccess(Permission.READ_TABLE),
     isSubItem: false,
+    tutorialTab: 'tables',
   };
 
   const todosLink: SidebarLink = {
     type: 'link',
     to: authenticationSession.appendProjectRoutePrefix('/todos'),
     label: t('Todos'),
-    icon: ListTodo,
-    showInEmbed: true,
+    show: platform.plan.todosEnabled || !embedState.isEmbedded,
+    icon: <ListTodo />,
     hasPermission: checkAccess(Permission.READ_TODOS),
     isSubItem: false,
+    tutorialTab: 'todos',
   };
 
-  const items: SidebarItem[] = [automationGroup, mcpLink, tablesLink, todosLink]
-    .filter(embedFilter)
-    .filter(permissionFilter)
-    .filter(filterAlerts);
-
-  for (const item of items) {
-    if (item.type === 'group') {
-      const newItems = item.items
-        .filter(embedFilter)
-        .filter(permissionFilter)
-        .filter(filterAlerts);
-      item.items = newItems;
-    }
-  }
-
-  const filteredItems = items.filter((item) => {
-    if (item.type === 'group') {
-      return item.items.length > 0;
-    }
-    return true;
-  });
+  const items: SidebarItem[] = [
+    flowsLink,
+    agentsLink,
+    tablesLink,
+    mcpLink,
+    todosLink,
+    releasesLink,
+  ].filter(permissionFilter);
 
   return (
     <ProjectChangedRedirector currentProjectId={currentProjectId}>
@@ -193,15 +151,21 @@ export function DashboardContainer({
         }}
       >
         <SidebarComponent
-          removeGutters={removeGutters}
           isHomeDashboard={true}
-          hideHeader={hideHeader}
-          items={filteredItems}
+          items={items}
           hideSideNav={embedState.hideSideNav}
-          removeBottomPadding={removeBottomPadding}
         >
-          {children}
+          <>
+            <>
+              <ProjectLockedAlert />
+              <TaskLimitAlert />
+              <AiCreditsLimitAlert />
+            </>
+            {children}
+          </>
         </SidebarComponent>
+        {showBilling && <WelcomeTrialDialog />}
+        {edition === ApEdition.CLOUD && <UpgradeDialog />}
       </CloseTaskLimitAlertContext.Provider>
     </ProjectChangedRedirector>
   );

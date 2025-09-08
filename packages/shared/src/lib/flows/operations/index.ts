@@ -4,7 +4,8 @@ import { Metadata } from '../../common/metadata'
 import { BranchCondition, CodeActionSchema, LoopOnItemsActionSchema, PieceActionSchema, RouterActionSchema } from '../actions/action'
 import { FlowStatus } from '../flow'
 import { FlowVersion, FlowVersionState } from '../flow-version'
-import { EmptyTrigger, PieceTrigger, Trigger } from '../triggers/trigger'
+import { SaveSampleDataRequest } from '../sample-data'
+import { EmptyTrigger, FlowTrigger, PieceTrigger } from '../triggers/trigger'
 import { flowPieceUtil } from '../util/flow-piece-util'
 import { flowStructureUtil } from '../util/flow-structure-util'
 import { _addAction } from './add-action'
@@ -16,6 +17,7 @@ import { _duplicateBranch, _duplicateStep } from './duplicate-step'
 import { _importFlow } from './import-flow'
 import { flowMigrations } from './migrations'
 import { _moveAction } from './move-action'
+import { _moveBranch } from './move-branch'
 import { _getOperationsForPaste } from './paste-operations'
 import { _skipAction } from './skip-action'
 import { _updateAction } from './update-action'
@@ -41,6 +43,8 @@ export enum FlowOperationType {
     DUPLICATE_BRANCH = 'DUPLICATE_BRANCH',
     SET_SKIP_ACTION = 'SET_SKIP_ACTION',
     UPDATE_METADATA = 'UPDATE_METADATA',
+    MOVE_BRANCH = 'MOVE_BRANCH',
+    SAVE_SAMPLE_DATA = 'SAVE_SAMPLE_DATA',
 }
 
 export const DeleteBranchRequest = Type.Object({
@@ -53,6 +57,12 @@ export const AddBranchRequest = Type.Object({
     conditions: Type.Optional(Type.Array(Type.Array(BranchCondition))),
     branchName: Type.String(),
 })
+export const MoveBranchRequest = Type.Object({
+    sourceBranchIndex: Type.Number(),
+    targetBranchIndex: Type.Number(),
+    stepName: Type.String(),
+})
+export type MoveBranchRequest = Static<typeof MoveBranchRequest>
 
 export const SkipActionRequest = Type.Object({
     names: Type.Array(Type.String()),
@@ -86,7 +96,7 @@ export type LockFlowRequest = Static<typeof LockFlowRequest>
 
 export const ImportFlowRequest = Type.Object({
     displayName: Type.String({}),
-    trigger: Trigger,
+    trigger: FlowTrigger,
     schemaVersion: Nullable(Type.String()),
 })
 
@@ -154,7 +164,9 @@ export const UpdateFlowStatusRequest = Type.Object({
 })
 export type UpdateFlowStatusRequest = Static<typeof UpdateFlowStatusRequest>
 
-export const ChangePublishedVersionIdRequest = Type.Object({})
+export const ChangePublishedVersionIdRequest = Type.Object({
+    status: Type.Optional(Type.Enum(FlowStatus)),
+})
 export type ChangePublishedVersionIdRequest = Static<
     typeof ChangePublishedVersionIdRequest
 >
@@ -327,6 +339,18 @@ export const FlowOperationRequest = Type.Union([
             title: 'Update Metadata',
         },
     ),
+    Type.Object(
+        {
+            type: Type.Literal(FlowOperationType.MOVE_BRANCH),
+            request: MoveBranchRequest,
+        },
+    ),
+    Type.Object(
+        {
+            type: Type.Literal(FlowOperationType.SAVE_SAMPLE_DATA),
+            request: SaveSampleDataRequest,
+        },
+    ),
 ])
 
 export type FlowOperationRequest = Static<typeof FlowOperationRequest>
@@ -410,6 +434,11 @@ export const flowOperations = {
             }
             case FlowOperationType.SET_SKIP_ACTION: {
                 clonedVersion = _skipAction(clonedVersion, operation.request)
+                clonedVersion = flowPieceUtil.makeFlowAutoUpgradable(clonedVersion)
+                break
+            }
+            case FlowOperationType.MOVE_BRANCH: {
+                clonedVersion = _moveBranch(clonedVersion, operation.request)
                 clonedVersion = flowPieceUtil.makeFlowAutoUpgradable(clonedVersion)
                 break
             }
