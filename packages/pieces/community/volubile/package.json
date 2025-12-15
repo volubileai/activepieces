@@ -1,4 +1,13 @@
 {
   "name": "@activepieces/piece-volubile",
-  "version": "0.0.9"
+  "version": "0.0.9",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/volubileai/activepieces.git",
+    "directory": "src"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "directory": "./src"
+  }
 }
