@@ -17,9 +17,11 @@ export const returnContext = createAction({
   errorHandlingOptions: {
     continueOnFailure: {
       hide: true,
+      defaultValue: false,
     },
     retryOnFailure: {
       hide: true,
+      defaultValue: false,
     },
   },
 
