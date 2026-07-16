@@ -10781,6 +10781,19 @@
         "vitest": "3.2.6",
       },
     },
+    "packages/pieces/custom/volubile": {
+      "name": "@activepieces/piece-volubile",
+      "version": "0.0.10",
+      "dependencies": {
+        "@activepieces/core-piece-types": "workspace:*",
+        "@activepieces/core-utils": "workspace:*",
+        "@activepieces/pieces-common": "workspace:*",
+        "@activepieces/pieces-framework": "workspace:*",
+      },
+      "devDependencies": {
+        "tslib": "2.6.2",
+      },
+    },
     "packages/pieces/framework": {
       "name": "@activepieces/pieces-framework",
       "version": "0.33.1",
@@ -12604,6 +12617,8 @@
     "@activepieces/piece-vlm-run": ["@activepieces/piece-vlm-run@workspace:packages/pieces/community/vlm-run"],
 
     "@activepieces/piece-voipstudio": ["@activepieces/piece-voipstudio@workspace:packages/pieces/community/voipstudio"],
+
+    "@activepieces/piece-volubile": ["@activepieces/piece-volubile@workspace:packages/pieces/custom/volubile"],
 
     "@activepieces/piece-vouchery-io": ["@activepieces/piece-vouchery-io@workspace:packages/pieces/community/vouchery-io"],
 

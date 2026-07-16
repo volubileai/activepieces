@@ -9,7 +9,7 @@ import { failoverTrigger } from './lib/triggers/failover-trigger';
 export const volubile = createPiece({
   displayName: 'Volubile',
   auth: volubileAuth,
-  minimumSupportedRelease: '0.73.0',
+  minimumSupportedRelease: '0.86.3',
   logoUrl:
     'https://volubile.blob.core.windows.net/backoffice/assets/activepieces/volubile-icon.svg',
   authors: [],
